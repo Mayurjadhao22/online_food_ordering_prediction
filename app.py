@@ -10,17 +10,22 @@ st.set_page_config(
     layout="centered",
 )
 
+# Determine absolute path to the directory containing this script
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
+
 
 @st.cache_resource
-def load_model():
-    """Load the trained RandomForest model from model.pkl."""
-    model_path = "model.pkl"
-    if not os.path.exists(model_path):
-        st.error(f"Model file `{model_path}` not found in the root directory.")
-        st.stop()
-    with open(model_path, "rb") as f:
-        model = pickle.load(f)
-    return model
+def load_model_from_file(file_path):
+    """Load pickle model from a file path."""
+    with open(file_path, "rb") as f:
+        return pickle.load(f)
+
+
+@st.cache_resource
+def load_model_from_bytes(uploaded_file):
+    """Load pickle model from Streamlit file uploader bytes."""
+    return pickle.load(uploaded_file)
 
 
 def main():
@@ -29,7 +34,24 @@ def main():
         "Enter customer demographic and socioeconomic details below to predict their response."
     )
 
-    model = load_model()
+    model = None
+
+    # Check if local model.pkl exists relative to app.py
+    if os.path.exists(DEFAULT_MODEL_PATH):
+        model = load_model_from_file(DEFAULT_MODEL_PATH)
+    else:
+        st.warning(
+            f"`model.pkl` was not found at `{DEFAULT_MODEL_PATH}`."
+        )
+        uploaded_model = st.file_uploader(
+            "Please upload your `model.pkl` file to continue:", type=["pkl", "pickle"]
+        )
+        if uploaded_model is not None:
+            model = load_model_from_bytes(uploaded_model)
+            st.success("Model loaded successfully from upload!")
+        else:
+            st.info("Upload a model file above to enable predictions.")
+            st.stop()
 
     st.subheader("Customer Details")
 
@@ -71,7 +93,6 @@ def main():
         )
 
     # Encode categorical features into numeric formats standard for ML pipelines
-    # Adjust mappings below if your training pipeline used a different ordinal sequence
     gender_map = {"Male": 0, "Female": 1, "Other": 2}
     marital_map = {"Single": 0, "Married": 1, "Divorced": 2, "Widowed": 3}
     occupation_map = {
@@ -113,7 +134,6 @@ def main():
     if st.button("Predict Customer Response", type="primary"):
         try:
             prediction = model.predict(input_data)[0]
-            probabilities = model.predict_proba(input_data)[0]
 
             st.subheader("Prediction Result")
             if prediction == "Yes" or prediction == 1:
@@ -122,12 +142,14 @@ def main():
                 st.warning(f"**Result:** Negative Response ({prediction})")
 
             # Display prediction probabilities if available
-            if hasattr(model, "classes_"):
-                st.write("**Prediction Probabilities:**")
-                prob_df = pd.DataFrame(
-                    [probabilities], columns=[str(c) for c in model.classes_]
-                )
-                st.dataframe(prob_df.style.format("{:.2%}"))
+            if hasattr(model, "predict_proba"):
+                probabilities = model.predict_proba(input_data)[0]
+                if hasattr(model, "classes_"):
+                    st.write("**Prediction Probabilities:**")
+                    prob_df = pd.DataFrame(
+                        [probabilities], columns=[str(c) for c in model.classes_]
+                    )
+                    st.dataframe(prob_df.style.format("{:.2%}"))
 
         except Exception as e:
             st.error(f"Error making prediction: {e}")
